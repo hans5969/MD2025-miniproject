@@ -1,0 +1,129 @@
+#get into msi
+ssh hans5969@agate.msi.umn.edu
+
+#for 1 hour
+srun -N 1 --ntasks-per-node=4 --mem-per-cpu=12gb -t 1:00:00 -p interactive --pty bas
+
+#load conda
+module load conda
+
+#activate conda env
+source activate /users/4/hans5969/mdseq
+
+#or deactivate
+source deactivate /users/4/hans5969/mdseq
+
+#load qiime2 - default for MSI is 2019.10 which is too old for the dada2 commands
+module load qiime2/2024.5
+
+#make sure data is in .fastq.gz format in the folder - so don't unzip before uploading
+#Import Data (Ensure your FASTQ files follow the Casava 1.8 format)
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path /users/4/hans5969/mdseq/data/miniproject \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path /users/4/hans5969/mdseq/results/miniproject/miniproject-demux-paired-end.qza
+
+#visualize demultiplexed data
+qiime demux summarize \
+  --i-data /users/4/hans5969/mdseq/results/miniproject/miniproject-demux-paired-end.qza \
+  --o-visualization /users/4/hans5969/mdseq/results/miniproject/miniproject-demux-paired-end.qzv
+
+#-----------------------------------------------------------------------------------
+#denoise data with dada2 ----- I did not use this, got a lot of errors      --------
+#truncating the reads means cutting off @ the spot where the median read quality score drops below 30
+#i got these values by looking at the demux-paired-end.qzv file on https://view.qiime2.org/
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs /users/4/hans5969/mdseq/results/miniproject/miniproject-demux-paired-end.qza \
+  --p-trunc-len-f 135 \
+  --p-trunc-len-r 133 \
+  --o-table /users/4/hans5969/mdseq/results/table.qza \
+  --o-representative-sequences /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qza \
+  --o-denoising-stats /users/4/hans5969/mdseq/results/miniproject/miniproject-denoising_stats.qza
+#-----------------------------------------------------------------------------------
+
+#just using forward reads
+qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /users/4/hans5969/mdseq/results/miniproject/miniproject-demux-paired-end.qza \
+  --p-trunc-len 135 \
+  --p-trim-left 0 \
+  --o-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qza \
+  --o-representative-sequences /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qza \
+  --o-denoising-stats /users/4/hans5969/mdseq/results/miniproject/miniproject-denoising_stats.qza
+
+#Feature Table Summary
+qiime feature-table summarize \
+  --i-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qza \
+  --o-visualization /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qzv \
+  --m-sample-metadata-file /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt
+
+#Visualize Representative Sequences
+qiime feature-table tabulate-seqs \
+  --i-data /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qza \
+  --o-visualization /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qzv
+
+#Construct a Phylogenetic Tree
+qiime alignment mafft \
+  --i-sequences /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qza \
+  --o-alignment /users/4/hans5969/mdseq/results/miniproject/miniproject-aligned.qza
+
+qiime phylogeny fasttree \
+  --i-alignment /users/4/hans5969/mdseq/results/miniproject/miniproject-aligned.qza \
+  --o-tree  /users/4/hans5969/mdseq/results/miniproject/miniproject-unrooted_tree.qza
+
+qiime phylogeny midpoint-root \
+  --i-tree /users/4/hans5969/mdseq/results/miniproject/miniproject-unrooted_tree.qza \
+  --o-rooted-tree /users/4/hans5969/mdseq/results/miniproject/miniproject-rooted_tree.qza
+
+#Classify Taxonomy
+ qiime feature-classifier classify-sklearn \
+  --i-classifier /users/4/hans5969/mdseq/silva-138-99-nb-classifier.qza \
+  --i-reads /users/4/hans5969/mdseq/results/miniproject/miniproject-rep_seqs.qza  \
+  --o-classification /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qza
+
+qiime metadata tabulate \
+  --m-input-file /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qza \
+  --o-visualization  /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qzv
+
+qiime taxa barplot \
+  --i-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qza \
+  --i-taxonomy  /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qza \
+  --m-metadata-file  /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt \
+  --o-visualization  /users/4/hans5969/mdseq/results/miniproject/miniproject-taxa_barplot.qzv
+
+#Filter Out Unwanted Taxa
+qiime taxa filter-table \
+  --i-table  /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qza \
+  --i-taxonomy /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qza \
+  --p-exclude chloroplast,mitochondria \
+  --p-include d__Bacteria,d__Archaea \
+  --o-filtered-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table_no_chloroplast.qza
+
+qiime taxa barplot \
+  --i-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table_no_chloroplast.qza \
+  --i-taxonomy  /users/4/hans5969/mdseq/results/miniproject/miniproject-taxonomy.qza \
+  --m-metadata-file  /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt \
+  --o-visualization /users/4/hans5969/mdseq/results/miniproject/miniproject-taxa_barplot_no_chloroplast.qzv
+
+
+#Generate Core Diversity Matrix
+#using extremely low sampling depth so all of my samples are included
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny /users/4/hans5969/mdseq/results/miniproject/miniproject-rooted_tree.qza \
+  --i-table /users/4/hans5969/mdseq/results/miniproject/miniproject-table.qza \
+  --p-sampling-depth 50 \
+  --output-dir /users/4/hans5969/mdseq/results/miniproject/core_metrics_results \
+  --m-metadata-file  /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt
+
+#Alpha Diversity (Observed Features)
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity /users/4/hans5969/mdseq/results/miniproject/core_metrics_results/observed_features_vector.qza \
+  --m-metadata-file /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt \
+  --o-visualization /users/4/hans5969/mdseq/results/miniproject/observed_features.qzv
+
+#Alpha Diversity (Shannon Index)
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity /users/4/hans5969/mdseq/results/miniproject/core_metrics_results/shannon_vector.qza \
+  --m-metadata-file /users/4/hans5969/mdseq/results/miniproject/miniproject-metadata.txt \
+  --o-visualization  /users/4/hans5969/mdseq/results/miniproject/shannon.qzv
+
